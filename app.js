@@ -15,7 +15,7 @@ const verifyToken = process.env.VERIFY_TOKEN;
 app.get('/', (req, res) => {
   const { 'hub.mode': mode, 'hub.challenge': challenge, 'hub.verify_token': token } = req.query;
 
-  if (mode === 'subscribe' && token === EAAJentl02WEBP5wVFg4zV3MlZCIZBA86rmhWBE1BCRiENod5vT7jzlne5ipjdnodcsdgZAtm57ZApR2leEHnHR8pWVGGVDovvvXHma6HCRoHmqjyocsP1PcxF4S2FO6yLXDbC5tFYrHZCUVvjWcp5Gw1wWBKHRz238jUwAvevaZCFXEKiijkwiJr7kRk3EMsGgLumzjSZCgWtVZBaeiudBwlffevzFW6CmAG4Lmpb4CMqZCDldk1DBgTUrtnePGJkwOfGtPZBeZBZByZB7Pu3irZB8017QIZBVZCLnq4hcUnBl2UPwZDZD) {
+  if (mode === 'subscribe' && token === verifyToken) {
     console.log('WEBHOOK VERIFIED');
     res.status(200).send(challenge);
   } else {
