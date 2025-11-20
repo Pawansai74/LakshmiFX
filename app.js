@@ -245,9 +245,7 @@ app.get("/api/templates", (req, res) => {
 app.post("/api/templates", (req, res) => {
   const { name, body, category } = req.body || {};
   if (!name || !body) {
-    return res
-      .status(400)
-      .json({ error: "name and body are required" });
+    return res.status(400).json({ error: "name and body are required" });
   }
 
   const id = Date.now().toString();
@@ -299,7 +297,7 @@ app.post("/api/broadcast/manual", async (req, res) => {
   res.json({ ok: true, results });
 });
 
-// Placeholder for Excel upload
+// Dummy endpoint for file broadcast (not implemented)
 app.post("/api/broadcast/upload", (req, res) => {
   return res
     .status(501)
