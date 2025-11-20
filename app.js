@@ -1,30 +1,38 @@
 // app.js
 
-// Import dependencies
+// -------------------------
+// Imports & basic setup
+// -------------------------
 const express = require("express");
 const path = require("path");
 require("dotenv").config();
 
-// Create Express app
 const app = express();
 app.use(express.json());
 
-// PORT + VERIFY TOKEN
+// Port & verify token (for Meta webhook)
 const port = process.env.PORT || 3000;
 const verifyToken = process.env.VERIFY_TOKEN || "vibecode";
 
-// ---------------------------------------------
-// 🔹 In-memory storage (no database)
-// ---------------------------------------------
+// -------------------------
+// In-memory storage
+// -------------------------
 /*
   contactsMap: {
-    "919490140810": { waNumber: "919490140810", name: null, lastMessageAt: Date }
+    "919490140810": { waNumber, name, lastMessageAt: Date }
   }
 
   messages: [
     {
-      waNumber, direction, message_id, from, to,
-      timestamp, type, text, raw
+      waNumber,        // contact number
+      direction,       // "in" | "out"
+      message_id,
+      from,
+      to,
+      timestamp,       // WhatsApp unix seconds
+      type,
+      text,
+      raw              // full payload / response
     }
   ]
 
@@ -36,7 +44,9 @@ const contactsMap = new Map();
 const messages = [];
 const templates = [];
 
-// Helper to upsert contact
+// -------------------------
+// Helper: upsert contact
+// -------------------------
 function upsertContact(waNumber, tsSec) {
   const lastMessageAt =
     tsSec && !isNaN(tsSec) ? new Date(parseInt(tsSec) * 1000) : new Date();
@@ -53,10 +63,13 @@ function upsertContact(waNumber, tsSec) {
   return existing;
 }
 
-// Helper to send a WhatsApp text via Cloud API
+// -------------------------
+// Helper: send plain text (session message)
+// used by Inbox "Send" button
+// -------------------------
 async function sendWhatsAppText(to, bodyText) {
   const phoneId = process.env.WA_PHONE_ID; // e.g. 791237530747480
-  const token = process.env.WA_TOKEN; // your long-lived access token
+  const token = process.env.WA_TOKEN;      // long-lived user / system token
 
   if (!phoneId || !token) {
     throw new Error("WA_PHONE_ID or WA_TOKEN not set");
@@ -81,13 +94,14 @@ async function sendWhatsAppText(to, bodyText) {
   });
 
   const data = await response.json();
-  console.log("📤 Send API response:", data);
+  console.log("📤 Text send response:", data);
 
   if (!response.ok) {
-    console.log("❌ WhatsApp API error:", data);
+    console.log("❌ WhatsApp API error (text):", data);
     throw new Error("wa_send_failed");
   }
 
+  // Log & store message
   const nowSec = Math.floor(Date.now() / 1000);
   upsertContact(to, nowSec);
 
@@ -106,9 +120,71 @@ async function sendWhatsAppText(to, bodyText) {
   return data;
 }
 
-// ---------------------------------------------
-// 🔥 GET /  → Meta verification
-// ---------------------------------------------
+// -------------------------
+// Helper: send template message
+// used by Broadcast
+// -------------------------
+async function sendWhatsAppTemplate(to, templateName, languageCode, components) {
+  const phoneId = process.env.WA_PHONE_ID;
+  const token = process.env.WA_TOKEN;
+
+  if (!phoneId || !token) {
+    throw new Error("WA_PHONE_ID or WA_TOKEN not set");
+  }
+
+  const url = `https://graph.facebook.com/v21.0/${phoneId}/messages`;
+
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: templateName,                      // must match Meta template name
+      language: { code: languageCode || "en_US" },
+      components: components || [],           // body/header params, images, etc.
+    },
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+  console.log("📤 Template send response:", data);
+
+  if (!response.ok) {
+    console.log("❌ WhatsApp API error (template):", data);
+    throw new Error("wa_template_failed");
+  }
+
+  // Optional: store as outbound message
+  const nowSec = Math.floor(Date.now() / 1000);
+  upsertContact(to, nowSec);
+
+  messages.push({
+    waNumber: to,
+    direction: "out",
+    message_id: data.messages?.[0]?.id || "",
+    from: "",
+    to,
+    timestamp: String(nowSec),
+    type: "template",
+    text: `[TEMPLATE] ${templateName}`,
+    raw: data,
+  });
+
+  return data;
+}
+
+// -------------------------
+// GET / → Meta webhook verification
+// (this is the URL you put in Meta Webhooks)
+// -------------------------
 app.get("/", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -125,9 +201,9 @@ app.get("/", (req, res) => {
   }
 });
 
-// ---------------------------------------------
-// 🔥 POST /  → Webhook from WhatsApp
-// ---------------------------------------------
+// -------------------------
+// POST / → WhatsApp webhook
+// -------------------------
 app.post("/", async (req, res) => {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
   console.log(`\n📩 Webhook received at ${ts}\n`);
@@ -142,7 +218,7 @@ app.post("/", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 1) Incoming user messages
+    // Incoming messages
     if (value.messages && !value.statuses) {
       const msg = value.messages[0];
 
@@ -168,7 +244,7 @@ app.post("/", async (req, res) => {
       console.log("💾 Message saved (in-memory) for contact:", contact.waNumber);
     }
 
-    // 2) Status updates (delivered, read, etc.)
+    // Status updates
     if (value.statuses) {
       const status = value.statuses[0];
       console.log(
@@ -185,9 +261,11 @@ app.post("/", async (req, res) => {
   res.sendStatus(200);
 });
 
-// ---------------------------------------------
-// 🌐 API: Contacts
-// ---------------------------------------------
+// -------------------------
+// REST API: Contacts & Messages
+// -------------------------
+
+// List contacts
 app.get("/api/contacts", (req, res) => {
   try {
     const contacts = Array.from(contactsMap.values()).sort(
@@ -200,7 +278,7 @@ app.get("/api/contacts", (req, res) => {
   }
 });
 
-// 🌐 API: Messages for one contact
+// Messages for one contact
 app.get("/api/messages", (req, res) => {
   const waNumber = req.query.waNumber;
   if (!waNumber) {
@@ -218,9 +296,9 @@ app.get("/api/messages", (req, res) => {
   }
 });
 
-// 🌐 API: Send single outbound message (used in Inbox)
+// Single outbound text message (Inbox)
 app.post("/api/send", async (req, res) => {
-  const { waNumber, text } = req.body;
+  const { waNumber, text } = req.body || {};
 
   if (!waNumber || !text) {
     return res.status(400).json({ error: "waNumber and text are required" });
@@ -235,13 +313,16 @@ app.post("/api/send", async (req, res) => {
   }
 });
 
-// ---------------------------------------------
-// 🌐 API: Templates (in-memory)
-// ---------------------------------------------
+// -------------------------
+// REST API: Templates (local)
+// -------------------------
+
+// Get local templates
 app.get("/api/templates", (req, res) => {
   res.json(templates);
 });
 
+// Create new local template
 app.post("/api/templates", (req, res) => {
   const { name, body, category } = req.body || {};
   if (!name || !body) {
@@ -261,9 +342,54 @@ app.post("/api/templates", (req, res) => {
   res.json({ ok: true, template: tpl });
 });
 
-// ---------------------------------------------
-// 🌐 API: Broadcast using manual numbers only
-// ---------------------------------------------
+// OPTIONAL: Sync templates from WhatsApp Manager
+// Needs env: WABA_ID + WA_TOKEN
+app.get("/api/templates/sync", async (req, res) => {
+  try {
+    const wabaId = process.env.WABA_ID;
+    const token = process.env.WA_TOKEN;
+
+    if (!wabaId || !token) {
+      return res
+        .status(500)
+        .json({ error: "WABA_ID or WA_TOKEN not set for sync" });
+    }
+
+    const url = `https://graph.facebook.com/v21.0/${wabaId}/message_templates?limit=200`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.log("Template sync error:", data);
+      return res.status(500).json({ error: "sync_failed", data });
+    }
+
+    // Clear & refill local templates list
+    templates.length = 0;
+    for (const t of data.data || []) {
+      templates.push({
+        id: t.id,
+        name: t.name,
+        body:
+          t.components?.find((c) => c.type === "BODY")?.text || "",
+        category: t.category || "utility",
+      });
+    }
+
+    console.log(`🔄 Synced ${templates.length} templates from WABA`);
+    res.json({ ok: true, count: templates.length });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "sync_failed" });
+  }
+});
+
+// -------------------------
+// REST API: Broadcast (manual numbers)
+// Uses template messages
+// -------------------------
 app.post("/api/broadcast/manual", async (req, res) => {
   const { templateId, numbers } = req.body || {};
 
@@ -275,9 +401,8 @@ app.post("/api/broadcast/manual", async (req, res) => {
   }
 
   const tpl =
-    templates.find(
-      (t) => t.id === templateId || t.name === templateId
-    ) || null;
+    templates.find((t) => t.id === templateId || t.name === templateId) ||
+    null;
 
   if (!tpl) {
     return res.status(400).json({ error: "template_not_found" });
@@ -286,34 +411,36 @@ app.post("/api/broadcast/manual", async (req, res) => {
   const results = [];
   for (const num of numbers) {
     try {
-      await sendWhatsAppText(num, tpl.body);
+      // Simple case: no variables / media yet
+      await sendWhatsAppTemplate(num, tpl.name, "en_US", []);
       results.push({ to: num, ok: true });
     } catch (e) {
       console.error("Broadcast send failed for", num, e.message);
-      results.push({ to: num, ok: false });
+      results.push({ to: num, ok: false, error: e.message });
     }
   }
 
   res.json({ ok: true, results });
 });
 
-// Dummy endpoint for file broadcast (not implemented)
+// Excel upload not implemented – front-end warns user
 app.post("/api/broadcast/upload", (req, res) => {
   return res
     .status(501)
     .json({ error: "excel_upload_not_implemented_use_manual" });
 });
 
-// ---------------------------------------------
-// 🖥 Serve Inbox UI
-// ---------------------------------------------
+// -------------------------
+// Serve Inbox UI
+// -------------------------
 app.get("/inbox", (req, res) => {
   res.sendFile(path.join(__dirname, "inbox.html"));
 });
 
-// ---------------------------------------------
-// 🚀 Start Server
-// ---------------------------------------------
+// -------------------------
+// Start server
+// -------------------------
 app.listen(port, () => {
   console.log(`\n🚀 Server running on port ${port}\n`);
 });
+
