@@ -1,18 +1,14 @@
 {
-  "name": "lakshmifx-whatsapp-api",
+  "name": "lakshmifx-whatsapp",
   "version": "1.0.0",
-  "description": "WhatsApp Cloud API webhook + MongoDB storage for LakshmiFX",
   "main": "app.js",
   "scripts": {
     "start": "node app.js"
   },
-  "author": "Pavansai",
-  "license": "MIT",
- "dependencies": {
-  "express": "^4.19.0",
-  "multer": "^1.4.5",
-  "xlsx": "^0.18.5",
-  "dotenv": "^16.4.0"
-}
+  "dependencies": {
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "multer": "^1.4.5",
+    "xlsx": "^0.18.5"
   }
 }
