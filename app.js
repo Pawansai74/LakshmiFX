@@ -239,12 +239,10 @@ app.post("/api/send", async (req, res) => {
 });
 
 // ---------------------------------------------
-// (Optional) Serve a basic inbox page later
+// 🖥 Serve Inbox UI
 // ---------------------------------------------
 app.get("/inbox", (req, res) => {
-  res.send(
-    "<h2>Inbox placeholder</h2><p>Build a front-end to consume /api/contacts and /api/messages.</p>"
-  );
+  res.sendFile(path.join(__dirname, "inbox.html"));
 });
 
 // ---------------------------------------------
